@@ -4,6 +4,9 @@ import os
 
 public protocol ProcessExecutor: Sendable {
     func execute(command: String, _ arguments: [String]) async throws -> String
+    
+    func execute2(command: String, _ arguments: [String]) throws
+    
 }
 
 extension ProcessExecutor {
@@ -24,6 +27,11 @@ public struct NestProcessExecutor: ProcessExecutor {
         self.currentDirectoryURL = currentDirectory
         self.logger = logger
     }
+    
+    // TODO: command -> binaryPath
+    public func execute2(command: String, _ arguments: [String]) throws {
+        try _execute2(command: command, arguments.map { $0 })
+    }
 
     public func execute(command: String, _ arguments: [String]) async throws -> String {
         let elements = try await _execute(command: command, arguments.map { $0 })
@@ -34,6 +42,32 @@ public struct NestProcessExecutor: ProcessExecutor {
             }
         }.joined()
     }
+    
+    private func _execute2(command: String, _ arguments: [String]) throws {
+        logger.debug("$ \(command) \(arguments.joined(separator: " "))")
+        let executableURL = URL(fileURLWithPath: command)
+
+        let process = Process()
+        
+        process.currentDirectoryURL = currentDirectoryURL
+        process.executableURL = executableURL
+        process.arguments = arguments
+        
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        
+        outputPipe.fileHandleForReading.readabilityHandler = { fileHandle in
+            let availableData = fileHandle.availableData
+            guard !availableData.isEmpty,
+                  let string = String(data: availableData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !string.isEmpty
+            else { return }
+        }
+        
+        try process.run()
+        process.waitUntilExit()
+    }
+    
 
     private func _execute(command: String, _ arguments: [String]) async throws -> [StreamElement] {
         logger.debug("$ \(command) \(arguments.joined(separator: " "))")
@@ -80,7 +114,7 @@ public struct NestProcessExecutor: ProcessExecutor {
                 process.waitUntilExit()
 
                 // [Workaround] Sometimes, this code is executes before all events of `readabilityHandler` are addressed.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     let result = process.terminationReason == .exit && process.terminationStatus == 0
                     if result {
                         let returnedValue = results.withLock { $0 }
