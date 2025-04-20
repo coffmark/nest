@@ -26,6 +26,9 @@ public struct MockExecutorBuilder: ProcessExecutorBuilder {
 }
 
 public struct MockProcessExecutor: ProcessExecutor {
+    public func execute2(command: String, _ arguments: [String]) throws {
+    }
+    
     let executorClosure: @Sendable (String, [String]) async throws -> String
 
     public init(executorClosure: @escaping @Sendable (String, [String]) async throws -> String) {

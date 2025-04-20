@@ -1,6 +1,4 @@
 nestPath: ./.nest
 targets:
 - reference: realm/SwiftLint
-  version: 0.59.1
-  assetName: SwiftLintBinary.artifactbundle.zip
-  checksum: 1538db3751a0e588dbad435113b206dd29781a7dd1c38d8091b6d98d6e7f2e85
+  version: 0.58.2
