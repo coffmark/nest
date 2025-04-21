@@ -19,54 +19,58 @@ struct RunCommand: AsyncParsableCommand {
     @Flag(help: "")
     var verbose: Bool = false
     
-    @Argument(parsing: .captureForPassthrough)
-    var arguments: [String]
-    
+    @Option(help: "")
+    var noInstall: Bool = false
+
     // TODO: デフォルトのコメント
     // TODO: なければhomeディレクトリ直下のnestfileを探す
     @Option(help: "A nestfile written in yaml. (Default: nestfile.yaml")
     var nestfilePath: String = "nestfile.yaml"
     
-    enum RunCommandError: Error {
+    @Argument(parsing: .captureForPassthrough)
+    var arguments: [String]
+    
+    enum E: Error {
         case notFoundBinaryName
-        case notFoundReferenceName
         case notFoundVersionInNestfile
     }
     
-    // TODO: `nest run owner/repoで実行できるようにしておく
-    
-    private func getReference(binaryName: String, nestInfo: NestInfoController, logger: Logger) throws -> (referenceName: String, installedVersion: [String]) {
-        guard let commands = nestInfo.getInfo().commands.first (where: { $0.key == binaryName })?.value else {
-            throw RunCommandError.notFoundBinaryName
+    private func getBinaryName(referenceName: String, nestInfo: NestInfoController) -> String? {
+        let repositoryName = referenceName.split(separator: "/").last?.lowercased() ?? ""
+        // Since repository names typically match binary names, we search for an exact match with the key name.
+        let commands = nestInfo.getInfo().commands
+            .first { $0.key == repositoryName }
+        
+        guard let binaryName = commands?.key else {
+            return nestInfo.getInfo().commands
+                .first {
+                    let command = $0.value.first {
+                        switch $0.manufacturer {
+                        case let .artifactBundle(sourceInfo):
+                            return sourceInfo.zipURL.referenceName == referenceName
+                        case let .localBuild(repository):
+                            return repository.reference.referenceName == referenceName
+                        }
+                    }
+                    return command != nil
+                }?.key
         }
-        
-        let referenceName = commands
-            .compactMap { command in
-                switch command.manufacturer {
-                case let .artifactBundle(sourceInfo):
-                    return sourceInfo.zipURL.referenceName ?? nil
-                case let .localBuild(repository):
-                    return repository.reference.referenceName ?? nil
-                }
-            }
-            .first
-        
-        guard let referenceName else { throw RunCommandError.notFoundBinaryName }
-        
-        return (referenceName, commands.map { $0.version })
-        
+        return binaryName
     }
     
     private func getExpectedVersion(referenceName: String, nestfile: Nestfile) throws -> String {
         let version = nestfile.targets
             .compactMap { target -> String? in
-                guard case let .repository(repository) = target else { return nil }
+                guard case let .repository(repository) = target,
+                      repository.reference == referenceName
+                else { return nil }
                 return repository.version
             }
             .first
 
         guard let version else {
-            throw RunCommandError.notFoundVersionInNestfile
+            // TODO: nestfile.yamlに記載がなかった時の対応
+            throw E.notFoundVersionInNestfile
         }
         return version
     }
@@ -76,69 +80,102 @@ struct RunCommand: AsyncParsableCommand {
             .run(binaryPath: binaryRelativePath, arguments: subcommands)
     }
     
-    mutating func run() async throws {
-        let nestfile = try Nestfile.load(from: nestfilePath, fileSystem: FileManager.default)
-        let (executableBinaryPreparer, nestDirectory, artifactBundleManager, logger) = setUp(nestfile: nestfile)
-        let nestInfo = NestInfoController(directory: nestDirectory, fileSystem: FileManager.default)
-        
-        guard !arguments.isEmpty else {
-            logger.error("No binary name has been specified.", metadata: .color(.red))
-            return
-        }
-        let binaryName = arguments[0]
-        let subcommands = Array(arguments[1...])
-
-        let (referenceName, _) = try getReference(binaryName: binaryName, nestInfo: nestInfo, logger: logger)
-    
-        let expectedVersion = try getExpectedVersion(referenceName: referenceName, nestfile: nestfile)
-        print("debug: expectedVersion", expectedVersion)
-
-        guard let symbolicPath = try? artifactBundleManager.linkedFilePath(commandName: binaryName),
+    private func getBinaryRelativePath(
+        hasFetchAndInstalled: Bool,
+        referenceName: String,
+        nestInfo: NestInfoController,
+        nestDirectory: NestDirectory,
+        executableBinaryPreparer: ExecutableBinaryPreparer,
+        artifactBundleManager: ArtifactBundleManager,
+        logger: Logger,
+        expectedVersion: String
+    ) async throws -> String? {
+        guard let binaryName = getBinaryName(referenceName: referenceName, nestInfo: nestInfo),
+              let symbolicPath = try? artifactBundleManager.linkedFilePath(commandName: binaryName),
               symbolicPath.contains(expectedVersion)
         else {
+            guard !hasFetchAndInstalled else { return nil }
+            
             try await fetchAndInstallExecutableBinary(
-                binaryName: binaryName,
                 referenceName: referenceName,
                 executableBinaryPreparer: executableBinaryPreparer,
                 artifactBundleManager: artifactBundleManager,
                 logger: logger,
                 expectedVersion: expectedVersion
             )
-            let symbolicPath = try artifactBundleManager.linkedFilePath(commandName: binaryName)
-            guard symbolicPath.contains(expectedVersion) else {
-                return
-            }
-            try runExecutableBinary(
-                binaryRelativePath: "\(nestDirectory.rootDirectory.relativePath)\(symbolicPath)",
-                subcommands: subcommands,
-                logger: logger
+            return try await getBinaryRelativePath(
+                hasFetchAndInstalled: true,
+                referenceName: referenceName,
+                nestInfo: nestInfo,
+                nestDirectory: nestDirectory,
+                executableBinaryPreparer: executableBinaryPreparer,
+                artifactBundleManager: artifactBundleManager,
+                logger: logger,
+                expectedVersion: expectedVersion
             )
+        }
+        
+        return "\(nestDirectory.rootDirectory.relativePath)\(symbolicPath)"
+    }
+    
+    
+    mutating func run() async throws {
+        let nestfile = try Nestfile.load(from: nestfilePath, fileSystem: FileManager.default)
+        let (executableBinaryPreparer, nestDirectory, artifactBundleManager, logger) = setUp(nestfile: nestfile)
+        let nestInfo = NestInfoController(directory: nestDirectory, fileSystem: FileManager.default)
+        
+        // validate reference name
+        guard !arguments.isEmpty else {
+            logger.error("No owner/repository has been specified.", metadata: .color(.red))
+            return
+        }
+        guard arguments[0].contains("/") else {
+            logger.error("Invalid format: \(arguments[0]), expected owner/repository", metadata: .color(.red))
             return
         }
         
+        let referenceName = arguments[0]
+        let subcommands: [String] = if arguments.count >= 2 {
+            Array(arguments[1...])
+        } else {
+            []
+        }
+        let expectedVersion = try getExpectedVersion(referenceName: referenceName, nestfile: nestfile)
+        print("debug: expectedVersion", expectedVersion)
         print("debug: nestfile.nestPath", nestfile.nestPath)
         print("debug: nestDirectory", nestDirectory.rootDirectory.relativePath)
-        print("debug: symbolicPath", symbolicPath)
-        // TODO: もしかするとmock対応が必要
         print("debug: FileManager.default.currentDirectoryPath", FileManager.default.currentDirectoryPath)
+        
+        guard let binaryRelativePath = try await getBinaryRelativePath(
+            hasFetchAndInstalled: false,
+            referenceName: referenceName,
+            nestInfo: nestInfo,
+            nestDirectory: nestDirectory,
+            executableBinaryPreparer: executableBinaryPreparer,
+            artifactBundleManager: artifactBundleManager,
+            logger: logger,
+            expectedVersion: expectedVersion
+        ) else {
+            logger.error("Failed to find binary path", metadata: .color(.red))
+            return
+        }
         
         // TODO: `$ ...` は出力されるようにしたい
         try runExecutableBinary(
-            binaryRelativePath: "\(nestDirectory.rootDirectory.relativePath)\(symbolicPath)",
+            binaryRelativePath: binaryRelativePath,
             subcommands: subcommands,
             logger: logger
         )
     }
     
     private func fetchAndInstallExecutableBinary(
-        binaryName: String,
         referenceName: String,
         executableBinaryPreparer: ExecutableBinaryPreparer,
         artifactBundleManager: ArtifactBundleManager,
         logger: Logger,
         expectedVersion: String
     ) async throws {
-        logger.info("🪺 Start installation of \(binaryName) version \(expectedVersion).", metadata: .color(.green))
+        logger.info("🪺 Start installation of \(referenceName) version \(expectedVersion).", metadata: .color(.green))
         guard let installTarget = InstallTarget(argument: referenceName),
               let gitVersion = GitVersion(argument: expectedVersion) else {
             return

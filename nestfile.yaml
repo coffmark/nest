@@ -2,3 +2,5 @@ nestPath: ./.nest
 targets:
 - reference: realm/SwiftLint
   version: 0.58.2
+- reference: yonaskolb/XcodeGen
+  version: 2.43.0
