@@ -35,48 +35,45 @@ struct RunCommand: AsyncParsableCommand {
     mutating func run() async throws {
         let nestfile = try Nestfile.load(from: nestfilePath, fileSystem: FileManager.default)
         let (executableBinaryPreparer, nestDirectory, artifactBundleManager, logger) = setUp(nestfile: nestfile)
-        let nestInfo = NestInfoController(directory: nestDirectory, fileSystem: FileManager.default)
+        let nestInfoController = NestInfoController(directory: nestDirectory, fileSystem: FileManager.default)
         
-        // validate reference name
-        guard !arguments.isEmpty else {
-            logger.error("No owner/repository has been specified.", metadata: .color(.red))
-            return
-        }
-        guard arguments[0].contains("/") else {
-            logger.error("Invalid format: \(arguments[0]), expected owner/repository", metadata: .color(.red))
+        guard let runCommandExecutor = RunCommandExecutor(arguments: arguments),
+              let installTarget = InstallTarget(argument: runCommandExecutor.referenceName),
+              case let .git(gitURL) = installTarget
+        else {
+            logger.error("Invalid format: \(arguments), expected owner/repository", metadata: .color(.red))
             return
         }
         
-        let referenceName = arguments[0]
-        let subcommands: [String] = if arguments.count >= 2 {
-            Array(arguments[1...])
-        } else {
-            []
-        }
-        guard let expectedVersion = try getExpectedVersion(referenceName: referenceName, nestfile: nestfile) else {
+        guard let expectedVersion = runCommandExecutor.getVersion(nestfile: nestfile),
+              let gitVersion = GitVersion(argument: expectedVersion)
+        else {
             logger.error("Failed to find expected version in \(nestfilePath)", metadata: .color(.red))
             return
         }
-        
-        guard let binaryRelativePath = try await getBinaryRelativePath(
+
+        guard let symbolicPath = try await runCommandExecutor.getBinarySymbolicPath(
             hasFetchAndInstalled: false,
-            referenceName: referenceName,
-            nestInfo: nestInfo,
-            nestDirectory: nestDirectory,
+            referenceName: runCommandExecutor.referenceName,
+            gitURL: gitURL,
+            gitVersion: gitVersion,
+            expectedVersion: expectedVersion,
+            nestInfo: nestInfoController.getInfo(),
             executableBinaryPreparer: executableBinaryPreparer,
             artifactBundleManager: artifactBundleManager,
-            logger: logger,
-            expectedVersion: expectedVersion
+            logger: logger
         ) else {
             logger.error("Failed to find binary path", metadata: .color(.red))
             return
         }
-        
-        
-        
-        try await RunExecutor(executor: NestProcessExecutor(logger: logger))
-            .run(binaryPath: binaryRelativePath, arguments: subcommands)
+
+        _ = try await NestProcessExecutor(logger: logger)
+            .execute(
+                command: "\(nestDirectory.rootDirectory.relativePath)\(symbolicPath)",
+                runCommandExecutor.subcommands
+            )
     }
+    
     
     private func getBinaryName(referenceName: String, nestInfo: NestInfoController) -> String? {
         let repositoryName = referenceName.split(separator: "/").last?.lowercased() ?? ""
@@ -99,20 +96,6 @@ struct RunCommand: AsyncParsableCommand {
                 }?.key
         }
         return binaryName
-    }
-    
-    private func getExpectedVersion(referenceName: String, nestfile: Nestfile) throws -> String? {
-        let version = nestfile.targets
-            .compactMap { target -> String? in
-                guard case let .repository(repository) = target,
-                      repository.reference == referenceName
-                else { return nil }
-                return repository.version
-            }
-            .first
-
-        guard let version else { return nil }
-        return version
     }
     
     private func getBinaryRelativePath(

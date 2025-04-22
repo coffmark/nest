@@ -4,9 +4,6 @@ import os
 
 public protocol ProcessExecutor: Sendable {
     func execute(command: String, _ arguments: [String]) async throws -> String
-    
-    func execute2(command: String, _ arguments: [String]) throws
-    
 }
 
 extension ProcessExecutor {
@@ -26,11 +23,6 @@ public struct NestProcessExecutor: ProcessExecutor {
     public init(currentDirectory: URL? = nil, logger: Logging.Logger) {
         self.currentDirectoryURL = currentDirectory
         self.logger = logger
-    }
-    
-    // TODO: command -> binaryPath
-    public func execute2(command: String, _ arguments: [String]) throws {
-        try _execute2(command: command, arguments.map { $0 })
     }
 
     public func execute(command: String, _ arguments: [String]) async throws -> String {
