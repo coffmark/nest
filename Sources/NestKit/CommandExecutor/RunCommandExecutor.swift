@@ -7,7 +7,7 @@ public struct RunExecutor {
         self.executor = executor
     }
     
-    public func run(binaryPath: String, arguments: [String]) throws {
-        try executor.execute2(command: binaryPath, arguments)
+    public func run(binaryPath: String, arguments: [String]) async throws {
+        _ = try await executor.execute(command: binaryPath, arguments)
     }
 }

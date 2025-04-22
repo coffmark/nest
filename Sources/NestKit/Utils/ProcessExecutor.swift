@@ -114,7 +114,7 @@ public struct NestProcessExecutor: ProcessExecutor {
                 process.waitUntilExit()
 
                 // [Workaround] Sometimes, this code is executes before all events of `readabilityHandler` are addressed.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     let result = process.terminationReason == .exit && process.terminationStatus == 0
                     if result {
                         let returnedValue = results.withLock { $0 }
