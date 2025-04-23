@@ -29,7 +29,7 @@ public struct RunCommandExecutor {
         let version = nestfile.targets
             .compactMap { target -> String? in
                 guard case let .repository(repository) = target,
-                      repository.reference == referenceName
+                      repository.reference == referenceName || GitURL.parse(string: repository.reference)?.referenceName == referenceName
                 else { return nil }
                 return repository.version
             }
@@ -52,6 +52,7 @@ public struct RunCommandExecutor {
     ) async throws -> String? {
         guard let binaryName = getBinaryName(from: referenceName, nestInfo: nestInfo),
               // TODO: symbolic pathからバイナリを見てもいいけど、NestInfoとかである実体のバイナリをそもそも取得できれば、不要そう
+              // TODO: 明日ここから
               let symbolicPath = try? artifactBundleManager.linkedFilePath(commandName: binaryName),
               // TODO: expectedVersionがcontainsだけでいいのか？
               symbolicPath.contains(expectedVersion)
