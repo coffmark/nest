@@ -5,13 +5,15 @@ import NestKit
 public struct RunCommandExecutor {
     public let referenceName: String
     public let subcommands: [String]
+    public let expectedVersion: String
     // TODO: 引数が重くなっているから見直す
     
-    public init?(
-        arguments: [String],
-    ) {
+
+    
+    public init(arguments: [String], nestfile: Nestfile) throws {
         // validate reference name
-        guard !arguments.isEmpty, arguments[0].contains("/") else { return nil }
+        guard !arguments.isEmpty else { throw RunCommandExecutorError.notSpecifiedReference }
+        guard arguments[0].contains("/") else { throw RunCommandExecutorError.invalidFormatReference }
         
         let referenceName = arguments[0]
         let subcommands: [String] = if arguments.count >= 2 {
@@ -20,12 +22,59 @@ public struct RunCommandExecutor {
             []
         }
         
+        guard let expectedVersion = Self.getExpectedVersion(referenceName: referenceName, nestfile: nestfile) else {
+            // While we could execute with the latest version, the bootstrap subcommand serves that purpose.
+            // Therefore, we return an error when no version is specified.
+            throw RunCommandExecutorError.notFoundExpectedVersion
+        }
+        
         self.referenceName = referenceName
         self.subcommands = subcommands
+        self.expectedVersion = expectedVersion
     }
-    
+
+    // TODO: メソッド名を見直す
+    public func getBinaryRelativePath(
+        hasFetchAndInstalled: Bool,
+        gitURL: GitURL,
+        gitVersion: GitVersion,
+        nestInfo: NestInfo,
+        executableBinaryPreparer: ExecutableBinaryPreparer,
+        artifactBundleManager: ArtifactBundleManager,
+        logger: Logger
+    ) async throws -> String? {
+        guard let binaryRelativePath = getBinaryRelativePath(
+            referenceName: referenceName,
+            version: expectedVersion,
+            nestInfo: nestInfo
+        ) else {
+            // attempt installation only once
+            guard !hasFetchAndInstalled else { return nil }
+            
+            try await fetchAndInstallExecutableBinary(
+                gitURL: gitURL,
+                gitVersion: gitVersion,
+                executableBinaryPreparer: executableBinaryPreparer,
+                artifactBundleManager: artifactBundleManager,
+                logger: logger
+            )
+            return try await getBinaryRelativePath(
+                hasFetchAndInstalled: true,
+                gitURL: gitURL,
+                gitVersion: gitVersion,
+                nestInfo: nestInfo,
+                executableBinaryPreparer: executableBinaryPreparer,
+                artifactBundleManager: artifactBundleManager,
+                logger: logger
+            )
+        }
+        return binaryRelativePath
+    }
+}
+
+private extension RunCommandExecutor {
     /// Get the version that matches the `owner/repo`
-    public func getVersion(nestfile: Nestfile) -> String? {
+    private static func getExpectedVersion(referenceName: String, nestfile: Nestfile) -> String? {
         let version = nestfile.targets
             .compactMap { target -> String? in
                 guard case let .repository(repository) = target,
@@ -39,61 +88,16 @@ public struct RunCommandExecutor {
         return version
     }
     
-    public func getBinarySymbolicPath(
-        hasFetchAndInstalled: Bool,
-        referenceName: String,
-        gitURL: GitURL,
-        gitVersion: GitVersion,
-        expectedVersion: String,
-        nestInfo: NestInfo,
-        executableBinaryPreparer: ExecutableBinaryPreparer,
-        artifactBundleManager: ArtifactBundleManager,
-        logger: Logger
-    ) async throws -> String? {
-        guard let binaryName = getBinaryName(from: referenceName, nestInfo: nestInfo),
-              // TODO: symbolic pathからバイナリを見てもいいけど、NestInfoとかである実体のバイナリをそもそも取得できれば、不要そう
-              // TODO: 明日ここから
-              let symbolicPath = try? artifactBundleManager.linkedFilePath(commandName: binaryName),
-              // TODO: expectedVersionがcontainsだけでいいのか？
-              symbolicPath.contains(expectedVersion)
-        else {
-            // attempt installation only once
-            guard !hasFetchAndInstalled else { return nil }
-            
-            try await fetchAndInstallExecutableBinary(
-                gitURL: gitURL,
-                gitVersion: gitVersion,
-                executableBinaryPreparer: executableBinaryPreparer,
-                artifactBundleManager: artifactBundleManager,
-                logger: logger
-            )
-            return try await getBinarySymbolicPath(
-                hasFetchAndInstalled: true,
-                referenceName: referenceName,
-                gitURL: gitURL,
-                gitVersion: gitVersion,
-                expectedVersion: expectedVersion,
-                nestInfo: nestInfo,
-                executableBinaryPreparer: executableBinaryPreparer,
-                artifactBundleManager: artifactBundleManager,
-                logger: logger
-            )
-        }
-        
-        return symbolicPath
-    }
-}
-
-private extension RunCommandExecutor {
-    /// Get binary name from `owner/repo`
-    private func getBinaryName(from referenceName: String, nestInfo: NestInfo) -> String? {
+    /// Get binary relative path from `owner/repo`
+    private func getBinaryRelativePath(referenceName: String, version: String, nestInfo: NestInfo) -> String? {
         let repositoryName = referenceName.split(separator: "/").last?.lowercased() ?? ""
 
         // Since repository names typically match binary names, we search for an exact match with the key name.
-        let commands = nestInfo.commands
-            .first { $0.key == repositoryName }
+        let binaryRelativePath = nestInfo.commands
+            .first { $0.key == repositoryName }?.value
+            .first { $0.version == version }?.binaryPath
         
-        guard let binaryName = commands?.key else {
+        guard let binaryRelativePath else {
             return nestInfo.commands
                 .first {
                     let command = $0.value.first {
@@ -105,11 +109,11 @@ private extension RunCommandExecutor {
                         }
                     }
                     return command != nil
-                }?.key
+                }?.value
+                .first { $0.version == version }?.binaryPath
         }
-        return binaryName
+        return binaryRelativePath
     }
-    
     
     private func fetchAndInstallExecutableBinary(
         gitURL: GitURL,
@@ -122,7 +126,7 @@ private extension RunCommandExecutor {
             at: gitURL,
             version: gitVersion,
             artifactBundleZipFileName: nil,
-            // TODO: checksumをskipしているからよくないかも
+            // TODO: checksumをskipしているからよくない
             checksum: .skip
         )
 
@@ -131,4 +135,11 @@ private extension RunCommandExecutor {
             logger.info("🪺 Success to install \(binary.commandName) version \(binary.version).")
         }
     }
+}
+
+// TODO: ドキュメントコメント
+public enum RunCommandExecutorError: Error {
+    case notSpecifiedReference
+    case invalidFormatReference
+    case notFoundExpectedVersion
 }

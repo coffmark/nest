@@ -1,26 +1,30 @@
 import Testing
-import NestCLI
+@testable import NestCLI
 
 struct RunCommandExecutorTests {
     @Test(arguments: [
-        (["owner/repo"], false),
-        (["owner/repo subcommand --option"], false),
-        ([], true),
-        (["command"], true),
+        (["owner/repo1"], "owner/repo1", [], "0.0.1"),
+        (["owner/repo1", "subcommand", "--option"], "owner/repo1", ["subcommand", "--option"], "0.0.1"),
+        (["owner/repo3"], "owner/repo3", [], "0.0.3"),
+        (["owner/repo4"], "owner/repo4", [], "0.0.4")
     ])
-    func initialization(arguments: [String], isNil: Bool) {
-        let executor = RunCommandExecutor(arguments: arguments)
-        #expect((executor == nil) == isNil)
+    func initialization(arguments: [String], referenceName: String, subcommands: [String], expectedVersion: String) throws {
+        let executor = try RunCommandExecutor(arguments: arguments, nestfile: Self.nestfile)
+        #expect(executor.referenceName == referenceName)
+        #expect(executor.subcommands == subcommands)
+        #expect(executor.expectedVersion == expectedVersion)
     }
     
     @Test(arguments: [
-        (Self.nestfile, ["owner/repo1"], "0.0.1"),
-        (Self.nestfile, ["owner/repo2"], nil),
-        (Self.nestfile, ["owner/repo3"], "0.0.3"),
-        (Self.nestfile, ["owner/repo4"], "0.0.4")
+        ([], RunCommandExecutorError.notSpecifiedReference),
+        (["command"], RunCommandExecutorError.invalidFormatReference),
+        (["owner/repo2"], RunCommandExecutorError.notFoundExpectedVersion),
+        (["owner/repo5"], RunCommandExecutorError.notFoundExpectedVersion)
     ])
-    func getVersionTests(nestfile: Nestfile, arguments: [String], expectedVersion: String?) {
-        #expect(RunCommandExecutor(arguments: arguments)?.getVersion(nestfile: nestfile) == expectedVersion)
+    func initializationError(arguments: [String], error: RunCommandExecutorError) {
+        #expect(throws: error, performing: {
+            try RunCommandExecutor(arguments: arguments, nestfile: Self.nestfile)
+        })
     }
 }
 
@@ -58,6 +62,12 @@ extension RunCommandExecutorTests {
                         reference: "git@github.com:owner/repo4.git",
                         version: "0.0.4",
                         assetName: nil,
+                        checksum: nil
+                    )
+                ),
+                .zip(
+                    .init(
+                        zipURL: "https://github.com/owner/repo5/releases/download/0.0.5/foo.artifactbundle.zip",
                         checksum: nil
                     )
                 )
