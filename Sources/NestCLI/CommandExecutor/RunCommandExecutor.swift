@@ -3,12 +3,11 @@ import NestKit
 
 // TODO: ドキュメントコメント
 public struct RunCommandExecutor {
+    /// `owner/repo` format
     public let referenceName: String
     public let subcommands: [String]
     public let expectedVersion: String
     // TODO: 引数が重くなっているから見直す
-    
-
     
     public init(arguments: [String], nestfile: Nestfile) throws {
         // validate reference name
@@ -35,7 +34,7 @@ public struct RunCommandExecutor {
 
     // TODO: メソッド名を見直す
     public func getBinaryRelativePath(
-        hasFetchAndInstalled: Bool,
+        didAttemptInstallation: Bool,
         gitURL: GitURL,
         gitVersion: GitVersion,
         nestInfo: NestInfo,
@@ -43,13 +42,9 @@ public struct RunCommandExecutor {
         artifactBundleManager: ArtifactBundleManager,
         logger: Logger
     ) async throws -> String? {
-        guard let binaryRelativePath = getBinaryRelativePath(
-            referenceName: referenceName,
-            version: expectedVersion,
-            nestInfo: nestInfo
-        ) else {
+        guard let binaryRelativePath = getBinaryRelativePathFromNestInfo(nestInfo: nestInfo) else {
             // attempt installation only once
-            guard !hasFetchAndInstalled else { return nil }
+            guard !didAttemptInstallation else { return nil }
             
             try await fetchAndInstallExecutableBinary(
                 gitURL: gitURL,
@@ -59,7 +54,7 @@ public struct RunCommandExecutor {
                 logger: logger
             )
             return try await getBinaryRelativePath(
-                hasFetchAndInstalled: true,
+                didAttemptInstallation: true,
                 gitURL: gitURL,
                 gitVersion: gitVersion,
                 nestInfo: nestInfo,
@@ -89,13 +84,13 @@ private extension RunCommandExecutor {
     }
     
     /// Get binary relative path from `owner/repo`
-    private func getBinaryRelativePath(referenceName: String, version: String, nestInfo: NestInfo) -> String? {
+    private func getBinaryRelativePathFromNestInfo(nestInfo: NestInfo) -> String? {
         let repositoryName = referenceName.split(separator: "/").last?.lowercased() ?? ""
 
         // Since repository names typically match binary names, we search for an exact match with the key name.
         let binaryRelativePath = nestInfo.commands
             .first { $0.key == repositoryName }?.value
-            .first { $0.version == version }?.binaryPath
+            .first { $0.version == expectedVersion }?.binaryPath
         
         guard let binaryRelativePath else {
             return nestInfo.commands
@@ -110,7 +105,7 @@ private extension RunCommandExecutor {
                     }
                     return command != nil
                 }?.value
-                .first { $0.version == version }?.binaryPath
+                .first { $0.version == expectedVersion }?.binaryPath
         }
         return binaryRelativePath
     }
@@ -125,6 +120,7 @@ private extension RunCommandExecutor {
         let executableBinaries = try await executableBinaryPreparer.fetchOrBuildBinariesFromGitRepository(
             at: gitURL,
             version: gitVersion,
+            // TODO: zipfilenameもnilにしているのでよくない
             artifactBundleZipFileName: nil,
             // TODO: checksumをskipしているからよくない
             checksum: .skip
