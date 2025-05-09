@@ -19,6 +19,17 @@ public struct NestfileController: Sendable {
         self.fileDownloader = fileDownloader
         self.checksumCalculator = checksumCalculator
     }
+    
+    /// Get the version that matches the `owner/repo`
+    public func fetchTarget(referenceName: String, nestfile: Nestfile) -> Nestfile.Target? {
+        return nestfile.targets
+            .first { target in
+                guard case let .repository(repository) = target,
+                      repository.reference == referenceName || GitURL.parse(string: repository.reference)?.referenceName == referenceName
+                else { return false }
+                return true
+            }
+    }
 
     public func update(_ nestfile: Nestfile, excludedTargets: [ExcludedTarget]) async throws -> Nestfile {
         var nestfile = nestfile

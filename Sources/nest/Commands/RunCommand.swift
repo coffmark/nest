@@ -34,13 +34,13 @@ struct RunCommand: AsyncParsableCommand {
     
     mutating func run() async throws {
         let nestfile = try Nestfile.load(from: nestfilePath, fileSystem: FileManager.default)
-        let (executableBinaryPreparer, nestDirectory, artifactBundleManager, logger) = setUp(nestfile: nestfile)
+        let (nestfileController, executableBinaryPreparer, nestDirectory, artifactBundleManager, logger) = setUp(nestfile: nestfile)
         let nestInfoController = NestInfoController(directory: nestDirectory, fileSystem: FileManager.default)
         
         let runCommandExecutor: RunCommandExecutor
         
         do {
-            runCommandExecutor = try RunCommandExecutor(arguments: arguments, nestfile: nestfile)
+            runCommandExecutor = try RunCommandExecutor(arguments: arguments, nestfile: nestfile, nestfileController: nestfileController)
         } catch let error as RunCommandExecutorError {
             switch error {
             case .notSpecifiedReference:
@@ -60,11 +60,12 @@ struct RunCommand: AsyncParsableCommand {
             return
         }
 
-        guard let binaryRelativePath = try await runCommandExecutor.getBinaryRelativePath(
-            hasFetchAndInstalled: false,
+        guard let binaryRelativePath = try await runCommandExecutor.doSomething(
+            didAttemptInstallation: false,
             gitURL: gitURL,
             gitVersion: gitVersion,
             nestInfo: nestInfoController.getInfo(),
+            nestInfoController: nestInfoController,
             executableBinaryPreparer: executableBinaryPreparer,
             artifactBundleManager: artifactBundleManager,
             logger: logger
@@ -84,11 +85,15 @@ struct RunCommand: AsyncParsableCommand {
 extension RunCommand {
     // TODO: 違い Bootstrap Commandとの
     private func setUp(nestfile: Nestfile) -> (
+        NestfileController,
         ExecutableBinaryPreparer,
         NestDirectory,
         ArtifactBundleManager,
         Logger
     ) {
+        
+
+        
         LoggingSystem.bootstrap()
         let configuration = Configuration.make(
             // TODO: プロジェクトディレクトリでのnestPathとグローバルのnestPathが違っているのでテストするか実装を確認する
@@ -96,8 +101,22 @@ extension RunCommand {
             registryTokenEnvironmentVariableNames: nestfile.registries?.githubServerTokenEnvironmentVariableNames ?? [:],
             logLevel: .debug
         )
+        
+        let controller = NestfileController(
+            assetRegistryClientBuilder: AssetRegistryClientBuilder(
+                httpClient: configuration.httpClient,
+                registryConfigs: RegistryConfigs(github: GitHubRegistryConfigs.resolve(environmentVariableNames: nestfile.registries?.githubServerTokenEnvironmentVariableNames ?? [:])),
+                logger: configuration.logger
+            ),
+            fileSystem: configuration.fileSystem,
+            fileDownloader: configuration.fileDownloader,
+            checksumCalculator: SwiftChecksumCalculator(swift: SwiftCommand(
+                executor: NestProcessExecutor(logger: configuration.logger)
+            ))
+        )
 
         return (
+            controller,
             configuration.executableBinaryPreparer,
             configuration.nestDirectory,
             configuration.artifactBundleManager,
