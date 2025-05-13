@@ -20,8 +20,8 @@ public struct NestInfoController {
     }
 
     /// Get NestInfo.Command from `owner/repository`
-    public func fetchCommand(referenceName: String, version: String) -> NestInfo.Command? {
-        let repositoryName = referenceName.split(separator: "/").last?.lowercased() ?? ""
+    public func fetchCommand(reference: String, version: String) -> NestInfo.Command? {
+        let repositoryName = reference.split(separator: "/").last?.lowercased() ?? ""
 
         // Since repository names typically match binary names, we search for an exact match with the key name.
         let command = getInfo().commands
@@ -34,9 +34,9 @@ public struct NestInfoController {
                     let command = $0.value.first {
                         switch $0.manufacturer {
                         case let .artifactBundle(sourceInfo):
-                            return sourceInfo.zipURL.referenceName == referenceName
+                            return sourceInfo.zipURL.referenceName == reference
                         case let .localBuild(repository):
-                            return repository.reference.referenceName == referenceName
+                            return repository.reference.referenceName == reference
                         }
                     }
                     return command != nil

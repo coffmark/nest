@@ -6,27 +6,22 @@ import Logging
 
 // TODO: テストを書きたい
 // TODO: nestfileが見つかる場合、ホームディレクトリ直下に見つかる場合
-
 // TODO: ホームディレクトリ直下にある場合
-
+// TODO: なければhomeディレクトリ直下のnestfileを探す
 
 struct RunCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
-        // TODO: abstract
-        abstract: "Run executable file on a given nestfile."
+        abstract: "Run executable file on a given nestfile. If not found, it will attempt to install."
     )
 
-    @Flag(help: "")
+    @Flag(name: .shortAndLong)
     var verbose: Bool = false
     
-    // TODO: noInstall対応
-    @Option(help: "")
+    @Option(help: "Will not perform installation.")
     var noInstall: Bool = false
-
-    // TODO: デフォルトのコメント
-    // TODO: なければhomeディレクトリ直下のnestfileを探す
-    @Option(help: "A nestfile written in yaml. (Default: nestfile.yaml")
+    
+    @Option(help: "A nestfile written in yaml. (Default: nestfile.yaml)")
     var nestfilePath: String = "nestfile.yaml"
     
     @Argument(parsing: .captureForPassthrough)
@@ -37,31 +32,44 @@ struct RunCommand: AsyncParsableCommand {
         let (nestfileController, executableBinaryPreparer, nestDirectory, artifactBundleManager, logger) = setUp(nestfile: nestfile)
         let nestInfoController = NestInfoController(directory: nestDirectory, fileSystem: FileManager.default)
         
-        let runCommandExecutor: RunCommandExecutor
-        
-        do {
-            runCommandExecutor = try RunCommandExecutor(arguments: arguments, nestfile: nestfile, nestfileController: nestfileController)
-        } catch let error as RunCommandExecutorError {
-            switch error {
-            case .notSpecifiedReference:
-                logger.error("`owner/repository` is not specified.", metadata: .color(.red))
-            case .invalidFormatReference:
-                logger.error("Invalid format: \(arguments), expected owner/repository", metadata: .color(.red))
-            case .notFoundExpectedVersion:
-                logger.error("Failed to find expected version in nestfile", metadata: .color(.red))
-            }
+        guard !arguments.isEmpty else {
+            logger.error("`owner/repository` is not specified.", metadata: .color(.red))
+            return
+        }
+        guard arguments[0].contains("/") else {
+            logger.error("Invalid format: \(arguments), expected owner/repository", metadata: .color(.red))
             return
         }
         
-        guard let installTarget = InstallTarget(argument: runCommandExecutor.referenceName),
+        let reference = arguments[0]
+        let subcommands: [String] = if arguments.count >= 2 {
+            Array(arguments[1...])
+        } else {
+            []
+        }
+        // TODO: expectedVersionにする必要がある？
+        guard let target = nestfileController.fetchTarget(reference: reference, nestfile: nestfile),
+              let expectedVersion = target.version
+        else {
+            // While we could execute with the latest version, the bootstrap subcommand serves that purpose.
+            // Therefore, we return an error when no version is specified.
+            logger.error("Failed to find expected version in nestfile", metadata: .color(.red))
+            return
+        }
+        
+        guard let installTarget = InstallTarget(argument: reference),
               case let .git(gitURL) = installTarget,
-              let gitVersion = GitVersion(argument: runCommandExecutor.expectedVersion)
+              let gitVersion = GitVersion(argument: expectedVersion)
         else {
             return
         }
 
-        guard let binaryRelativePath = try await runCommandExecutor.doSomething(
+        guard let binaryRelativePath = try await resolveBinaryRelativePath(
             didAttemptInstallation: false,
+            noInstall: noInstall,
+            reference: reference,
+            version: expectedVersion,
+            target: target,
             gitURL: gitURL,
             gitVersion: gitVersion,
             nestInfo: nestInfoController.getInfo(),
@@ -77,13 +85,63 @@ struct RunCommand: AsyncParsableCommand {
         _ = try await NestProcessExecutor(logger: logger)
             .execute(
                 command: "\(nestDirectory.rootDirectory.relativePath)\(binaryRelativePath)",
-                runCommandExecutor.subcommands
+                subcommands
             )
+    }
+
+    private func resolveBinaryRelativePath(
+        didAttemptInstallation: Bool,
+        noInstall: Bool,
+        reference: String,
+        version: String,
+        target: Nestfile.Target,
+        gitURL: GitURL,
+        gitVersion: GitVersion,
+        nestInfo: NestInfo,
+        nestInfoController: NestInfoController,
+        executableBinaryPreparer: ExecutableBinaryPreparer,
+        artifactBundleManager: ArtifactBundleManager,
+        logger: Logger
+    ) async throws -> String? {
+        guard let binaryRelativePath = nestInfoController.fetchCommand(reference: reference, version: version)?.binaryPath
+        else {
+            // attempt installation only once
+            guard !didAttemptInstallation && !noInstall else { return nil }
+            
+            let checksumOption = ChecksumOption(expectedChecksum: target.resolveChecksum(), logger: logger)
+            
+            let executableBinaries = try await executableBinaryPreparer.fetchOrBuildBinariesFromGitRepository(
+                at: gitURL,
+                version: gitVersion,
+                artifactBundleZipFileName: target.resolveAssetName(),
+                checksum: checksumOption
+            )
+
+            for binary in executableBinaries {
+                try artifactBundleManager.install(binary)
+                logger.info("🪺 Success to install \(binary.commandName) version \(binary.version).")
+            }
+
+            return try await resolveBinaryRelativePath(
+                didAttemptInstallation: true,
+                noInstall: noInstall,
+                reference: reference,
+                version: version,
+                target: target,
+                gitURL: gitURL,
+                gitVersion: gitVersion,
+                nestInfo: nestInfo,
+                nestInfoController: nestInfoController,
+                executableBinaryPreparer: executableBinaryPreparer,
+                artifactBundleManager: artifactBundleManager,
+                logger: logger
+            )
+        }
+        return binaryRelativePath
     }
 }
 
 extension RunCommand {
-    // TODO: 違い Bootstrap Commandとの
     private func setUp(nestfile: Nestfile) -> (
         NestfileController,
         ExecutableBinaryPreparer,
@@ -91,9 +149,6 @@ extension RunCommand {
         ArtifactBundleManager,
         Logger
     ) {
-        
-
-        
         LoggingSystem.bootstrap()
         let configuration = Configuration.make(
             // TODO: プロジェクトディレクトリでのnestPathとグローバルのnestPathが違っているのでテストするか実装を確認する

@@ -52,8 +52,8 @@ struct NestfileControllerTests {
             repositoryTarget,
             .zip(Nestfile.ZIPURL(zipURL: zipFileURL.absoluteString, checksum: nil))
         ])
-        #expect(controller.fetchTarget(referenceName: "owner/foo", nestfile: nestfile) == repositoryTarget)
-        #expect(controller.fetchTarget(referenceName: "owner/undefined", nestfile: nestfile) == nil)
+        #expect(controller.fetchTarget(reference: "owner/foo", nestfile: nestfile) == repositoryTarget)
+        #expect(controller.fetchTarget(reference: "owner/undefined", nestfile: nestfile) == nil)
     }
 
     @Test

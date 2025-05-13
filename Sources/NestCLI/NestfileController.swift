@@ -21,11 +21,11 @@ public struct NestfileController: Sendable {
     }
     
     /// Get the version that matches the `owner/repo`
-    public func fetchTarget(referenceName: String, nestfile: Nestfile) -> Nestfile.Target? {
+    public func fetchTarget(reference: String, nestfile: Nestfile) -> Nestfile.Target? {
         return nestfile.targets
             .first { target in
                 guard case let .repository(repository) = target,
-                      repository.reference == referenceName || GitURL.parse(string: repository.reference)?.referenceName == referenceName
+                      repository.reference == reference || GitURL.parse(string: repository.reference)?.referenceName == reference
                 else { return false }
                 return true
             }
