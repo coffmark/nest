@@ -13,7 +13,7 @@ struct RunCommand: AsyncParsableCommand {
     @Flag(name: .shortAndLong)
     var verbose: Bool = false
     
-    @Option(help: "Will not perform installation.")
+    @Flag(help: "Will not perform installation.")
     var noInstall: Bool = false
     
     @Option(help: "A nestfile written in yaml. (Default: nestfile.yaml)")
@@ -72,7 +72,10 @@ struct RunCommand: AsyncParsableCommand {
             artifactBundleManager: artifactBundleManager,
             logger: logger
         ) else {
-            logger.error("Failed to find binary path", metadata: .color(.red))
+            logger.error(
+                "Failed to find binary path, likely because it's not installed. Please try without the --no-install option or run the bootstrap command.",
+                metadata: .color(.red)
+            )
             return
         }
 
