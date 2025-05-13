@@ -4,11 +4,6 @@ import NestKit
 import NestCLI
 import Logging
 
-// TODO: テストを書きたい
-// TODO: nestfileが見つかる場合、ホームディレクトリ直下に見つかる場合
-// TODO: ホームディレクトリ直下にある場合
-// TODO: なければhomeディレクトリ直下のnestfileを探す
-
 struct RunCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
