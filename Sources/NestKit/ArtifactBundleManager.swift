@@ -25,7 +25,6 @@ public struct ArtifactBundleManager: Sendable {
         commands = commands.filter { $0.version == version }
 
         for command in commands {
-            //
             // Remove symbolic link
             if let linkedFilePath = try? self.linkedFilePath(commandName: name),
                linkedFilePath == command.binaryPath {
@@ -51,10 +50,6 @@ public struct ArtifactBundleManager: Sendable {
 
     public func list() -> [String: [NestInfo.Command]] {
         nestInfoController.getInfo().commands
-    }
-    
-    public func readSymbolicLink(at path: String) throws -> String {
-        try fileSystem.destinationOfSymbolicLink(atPath: path)
     }
 
     private func add(_ binary: ExecutableBinary) throws {
@@ -158,7 +153,7 @@ extension ArtifactBundleManager {
         (try? self.linkedFilePath(commandName: name)) == commend.binaryPath
     }
 
-    public func linkedFilePath(commandName: String) throws -> String {
+    private func linkedFilePath(commandName: String) throws -> String {
         let urlString = try fileSystem.destinationOfSymbolicLink(atPath: directory.symbolicPath(name: commandName).path())
         let url = URL(filePath: urlString)
         return directory.relativePath(url)

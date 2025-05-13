@@ -10,7 +10,6 @@ extension URL {
         return "\(owner)/\(repo)"
     }
     
-    // TODO: この辺りを見れば良さそう
     public var fileNameWithoutPathExtension: String {
         lastPathComponent.replacingOccurrences(of: ".\(pathExtension)", with: "")
     }

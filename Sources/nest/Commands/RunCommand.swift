@@ -76,7 +76,7 @@ struct RunCommand: AsyncParsableCommand {
             return
         }
 
-        _ = try await NestProcessExecutor(logger: logger)
+        _ = try await NestProcessExecutor(logger: logger, logLevel: .info)
             .execute(
                 command: "\(nestDirectory.rootDirectory.relativePath)\(binaryRelativePath)",
                 subcommands
@@ -147,7 +147,7 @@ extension RunCommand {
         let configuration = Configuration.make(
             nestPath: nestfile.nestPath ?? ProcessInfo.processInfo.nestPath,
             registryTokenEnvironmentVariableNames: nestfile.registries?.githubServerTokenEnvironmentVariableNames ?? [:],
-            logLevel: .debug
+            logLevel: verbose ? .trace : .info
         )
         
         let controller = NestfileController(
