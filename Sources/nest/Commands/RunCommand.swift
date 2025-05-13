@@ -42,7 +42,6 @@ struct RunCommand: AsyncParsableCommand {
         } else {
             []
         }
-        // TODO: expectedVersionにする必要がある？
         guard let target = nestfileController.fetchTarget(reference: reference, nestfile: nestfile),
               let expectedVersion = target.version
         else {
@@ -146,7 +145,6 @@ extension RunCommand {
     ) {
         LoggingSystem.bootstrap()
         let configuration = Configuration.make(
-            // TODO: プロジェクトディレクトリでのnestPathとグローバルのnestPathが違っているのでテストするか実装を確認する
             nestPath: nestfile.nestPath ?? ProcessInfo.processInfo.nestPath,
             registryTokenEnvironmentVariableNames: nestfile.registries?.githubServerTokenEnvironmentVariableNames ?? [:],
             logLevel: .debug
